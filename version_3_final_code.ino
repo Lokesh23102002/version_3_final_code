@@ -4,6 +4,12 @@
 #include <Wire.h>
 #include <TinyGPS++.h>
 #include <SPI.h>
+#include <SD.h>
+
+const char *filename = "datalog.csv";
+File dataFile;
+Servo myservo; // servo initialization
+float initialh = 0;
 int n = 0;
 unsigned long starxbee = 0;
 unsigned long starbno = 0;
@@ -34,7 +40,7 @@ TinyGPSPlus gps;
 Adafruit_BNO055 bno = Adafruit_BNO055(55, 0x28); // BNO sensor data
 Adafruit_BMP3XX bmp;                             // BMP library initialization
 
-int D2 = 8;
+int D2 = 5;
 //---------------------------------------- Custom data types sending ------------------------------------------------//
 // Define a custom struct to store GNSS data
 struct GNSSData
@@ -122,7 +128,7 @@ struct VoltageData readVoltageSensor()
   VoltageData data;
 
   // Read voltage from the sensor (you may need to adjust this based on your sensor)
-  data.voltage = analogRead(A0) * 3.3 / 1023.0; // Adjust as per your voltage sensor
+  data.voltage = (analogRead(A0) * 3.3 * 5) / 1023.0; // Adjust as per your voltage sensor
 
   return data;
 }
@@ -161,16 +167,16 @@ struct BNO055Data readBNO055Sensor()
   data.gyroX = gyroz.x();
   data.gyroY = gyroz.y();
   data.gyroZ = gyroz.z();
-  data.temperature = bno.getTemp();         // Read temperature from BMP388
-  data.magX = meg.x();             // Magnetic field strength X (uT)
-  data.magY = meg.y();             // Magnetic field strength Y (uT)
-  data.magZ = meg.z();             // Magnetic field strength Z (uT)
-  data.linearAccelX = acc.x(); // Linear acceleration X (m/s^2)
-  data.linearAccelY = acc.y(); // Linear acceleration Y (m/s^2)
-  data.linearAccelZ = acc.z(); // Linear acceleration Z (m/s^2)
-  data.gravityX = event.acceleration.x;     // Gravitational acceleration X (m/s^2)
-  data.gravityY = event.acceleration.y;     // Gravitational acceleration Y (m/s^2)
-  data.gravityZ = event.acceleration.z;     // Gravitational acceleration Z (m/s^2)
+  data.temperature = bno.getTemp();     // Read temperature from BMP388
+  data.magX = meg.x();                  // Magnetic field strength X (uT)
+  data.magY = meg.y();                  // Magnetic field strength Y (uT)
+  data.magZ = meg.z();                  // Magnetic field strength Z (uT)
+  data.linearAccelX = acc.x();          // Linear acceleration X (m/s^2)
+  data.linearAccelY = acc.y();          // Linear acceleration Y (m/s^2)
+  data.linearAccelZ = acc.z();          // Linear acceleration Z (m/s^2)
+  data.gravityX = event.acceleration.x; // Gravitational acceleration X (m/s^2)
+  data.gravityY = event.acceleration.y; // Gravitational acceleration Y (m/s^2)
+  data.gravityZ = event.acceleration.z; // Gravitational acceleration Z (m/s^2)
 
   return data;
 }
@@ -202,6 +208,8 @@ void setup()
   Serial.begin(57600);
   Serial1.begin(9600); // GPS connection
   Serial2.begin(9600); // Xbee connection serial
+  myservo.attach(5);
+  myservo.write(180); // initial servo position
   // Initialize BNO055 sensor
   if (!bno.begin())
   {
@@ -213,24 +221,59 @@ void setup()
   starbno = millis();
 
   // Initialize BMP388 sensor
-  if (!bmp.begin_I2C(0x76, &Wire))
+  if (!bmp.begin_I2C(0x76, &Wire1))
   {
     Serial.println("Could not find a valid BMP3 sensor, check wiring!");
     while (1)
       ;
   }
 
+  // check for the presence of the SD card:
+  if (!SD.begin(BUILTIN_SDCARD))
+  { // Change to match your SD card's chip select pin
+    Serial.println("SD card initialization failed!");
+    while (1)
+      ;
+  }
+
+  dataFile = SD.open(filename, FILE_WRITE);
+
+  // Writing first line
+  if (dataFile)
+  {
+    dataFile.print("TIME_STAMPING,PACKET_COUNT,ALTITUDE,TEMPERATURE,VOLTAGE,GNSS_TIME,PRESSURE,GNSS_LATITUDE,GNSS_LONGITUDE,GNSS_ALTITUDE,GNSS_SATS,ACCELEROMETER_X,ACCELEROMETER_Y,ACCELEROMETER_Z,MAGNETOMETER_X,MAGNETOMETER_Y,MAGNETOMETER_Z,CM_ECHO,");
+    dataFile.close();
+  }
+  else
+  {
+    Serial.println("Error opening CSV file for writing.");
+  }
+
   bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);
   bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);
   bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
   bmp.setOutputDataRate(BMP3_ODR_50_HZ);
+  Serial.println(initialh);
+  initialh = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+  Serial.println(initialh);
 }
 
 void loop()
 {
+  //----------------------------------------  servo control mechanism  -------------------------------------------------//
+  if (n == 0)
+  {
+    initialh = bmp.readAltitude(SEALEVELPRESSURE_HPA);
+  }
+  if (initialh - bmp.readAltitude(SEALEVELPRESSURE_HPA) > 5)
+  {
+    myservo.write(0);
+    delay(50);
+  }
+  //----------------------------------------  servo control mechanism end  ---------------------------------------------//
   //----------------------------------------  data Parse for GPS  -------------------------------------------------//
   unsigned long starttime = millis();
-  while ((millis() - starttime) <= 700) // do this loop for up to 1000mS
+  while ((millis() - starttime) <= 20) // do this loop for up to 1000mS
   {
     if (Serial1.available())
     {
@@ -287,12 +330,32 @@ void loop()
   data += String(bnoData.gravityX, 2) + ",";
   data += String(bnoData.gravityY, 2) + ",";
   data += String(bnoData.gravityZ, 2) + ",";
+  //  data += String(initialh-bmp.readAltitude(SEALEVELPRESSURE_HPA), 2) + ",";
+  //  data += String(initialh-bmp.readAltitude(SEALEVELPRESSURE_HPA), 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
+  //  data += String(0, 2) + ",";
   data += String(bmp.readAltitude(SEALEVELPRESSURE_HPA), 2) + ",";
   data += String(bmp.temperature, 2) + ",";
   data += String(bmp.pressure / 100.0, 2) + ",";
 
   Serial.println(data);
   Serial.println(data.length());
+  Serial.println(initialh);
 
   //---------------------------------------- Making string of data for transmission procedure ends -----------------------------------------//
 
@@ -313,13 +376,27 @@ void loop()
   //    Serial.print(" ");
   //  }
   //  Serial.println();
-  if (millis() - starxbee > 1000)
+  if (millis() - starxbee > 100)
   {
     Serial2.write(packet, data.length() + 17);
     starxbee = millis();
     n++;
   }
   //---------------------------------------- Xbee data transmission procedure ends ---------------------------------------------//
+
+  //---------------------------------------- Sd card save data transmission procedure starts ---------------------------------------------//
+  dataFile = SD.open(filename, FILE_WRITE);
+  if (dataFile)
+  {
+    dataFile.print(data);
+    dataFile.close();
+  }
+  else
+  {
+    Serial.println("Error opening CSV file for writing.");
+  }
+
+  //---------------------------------------- Sd card save data transmission procedure ends   ---------------------------------------------//
   // You can perform further actions with the data here
 
   // Adjust the delay as needed (Currently capturing data as quickly as possible)
