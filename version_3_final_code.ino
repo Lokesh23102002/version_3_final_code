@@ -11,6 +11,7 @@ File dataFile;
 Servo myservo; // servo initialization
 float initialh = 0;
 int n = 0;
+float readings[10];
 unsigned long starxbee = 0;
 unsigned long starbno = 0;
 #define SEALEVELPRESSURE_HPA (1013.25)
@@ -43,6 +44,32 @@ Adafruit_BMP3XX bmp;                             // BMP library initialization
 int D2 = 5;
 //---------------------------------------- Custom data types sending ------------------------------------------------//
 // Define a custom struct to store GNSS data
+
+struct DescentDetector
+{
+  float previousReading;
+  int downwardCount;
+
+  DescentDetector() : previousReading(0), downwardCount(0) {}
+
+  void addReading(float reading)
+  {
+    if (reading < previousReading)
+    {
+      downwardCount++;
+    }
+    previousReading = reading;
+  }
+
+  bool detectDownwardDescent()
+  {
+    // Return true if there are at least 7 downward descents
+    return downwardCount > 7;
+  }
+};
+
+struct DescentDetector descentDetector;
+
 struct GNSSData
 {
   long time;
@@ -273,7 +300,7 @@ void loop()
   //----------------------------------------  servo control mechanism end  ---------------------------------------------//
   //----------------------------------------  data Parse for GPS  -------------------------------------------------//
   unsigned long starttime = millis();
-  while ((millis() - starttime) <= 20) // do this loop for up to 1000mS
+  while ((millis() - starttime) <= 100) // do this loop for up to 1000mS
   {
     if (Serial1.available())
     {
@@ -396,7 +423,14 @@ void loop()
     Serial.println("Error opening CSV file for writing.");
   }
 
-  //---------------------------------------- Sd card save data transmission procedure ends   ---------------------------------------------//
+  //---------------------------------------- Sd card save data transmission procedure ends   ---------------------------------------------//4
+
+  //---------------------------------------- Descent detection starts ---------------------------------------------//
+
+  descentDetector.addReading(bmp.readAltitude(SEALEVELPRESSURE_HPA));
+
+  //---------------------------------------- Descent detection ends ---------------------------------------------//
+
   // You can perform further actions with the data here
 
   // Adjust the delay as needed (Currently capturing data as quickly as possible)
